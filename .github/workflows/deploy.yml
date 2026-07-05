@@ -1,0 +1,50 @@
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - 'ansible/**'
+  workflow_dispatch:
+
+jobs:
+  terraform:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Synchroniser le code Terraform (état conservé entre les runs)
+        run: rsync -av --exclude='.terraform' --exclude='*.tfstate*' --exclude='terraform.tfvars' terraform/ /home/ansible-control/terraform-labo/
+
+      - name: Terraform Init
+        working-directory: /home/ansible-control/terraform-labo
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: /home/ansible-control/terraform-labo
+        env:
+          TF_VAR_pm_token_secret: ${{ secrets.PM_TOKEN_SECRET }}
+        run: terraform apply -auto-approve
+
+  ansible:
+    needs: terraform
+    runs-on: self-hosted
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Synchroniser le code Ansible
+        run: rsync -av ansible/ /home/ansible-control/ansible-labo/
+
+      - name: Attendre la fin du boot cloud-init des VMs
+        run: sleep 45
+
+      - name: Rejoindre le cluster Swarm
+        working-directory: /home/ansible-control/ansible-labo
+        run: ansible-playbook join-worker.yml
+
+      - name: Deployer la supervision
+        working-directory: /home/ansible-control/ansible-labo
+        run: ansible-playbook deploy-monitoring.yml
